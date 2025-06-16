@@ -1,0 +1,59 @@
+PROPOSTA DO TRABALHO FINAL DE PROGRAMAÇÃO PARALELA AVANÇADA 
+ALUNO: FELIPE DE SOUZA SANT'ANNA SILVEIRA
+
+ESTE TRABALHO CALCULA INDICADORES SOBRE OS PREÇOS DOS FECHAMENTOS DA EMPRESAS DO S&P 500
+ UTILIZANDO MPI, OPENMP E CUDA 
+ATUALMENTE ESTÁ IMPLEMENTADO:
+-RSI (INDICE DE FORÇA RELATIVA)
+-SMA (MÉDIA MÓVEL SIMPLES)
+-EMA (MÉDIA MÓVEL EXPONENCIAL)
+-STOCHASTIC K (ÍNDICE DE MOMENTO ESTOCÁSTICO K)
+-STOCHASTIC D (ÍNDICE DE MOMENTO ESTOCÁSTICO D)
+A pasta empresas contém os datasets de cada empresa, que foram divididos através do script split_dataset.py,
+e a pasta saida contém os resultados dos cálculos, que são salvos em arquivos CSV.
+Para fins de comparação há uma versão sequencial, uma versão com OpenMP e uma versão com CUDA, além da versão paralela com MPI.
+A VERSÃO SEQUENCIAL ESTÁ EM sequencial.c : compilar com gcc -o seq sequencial.c
+A VERSÃO COM OPENMP ESTÁ EM openmppuro.c : compilar com gcc -o openmp_exec openmppuro.c -fopenmp
+A VERSÃO COM CUDA ESTÁ EM cudapuro.c : 
+compilar os cuda kernels com nvcc:
+nvcc -c ema_kernel.cu -o ema_kernel.o
+nvcc -c sma_kernel.cu -o sma_kernel.o
+nvcc -c rsi_kernel.cu -o rsi_kernel.o
+nvcc -c stochastic_kernel.cu -o stochastic_kernel.o
+compilar o arquivo principal com gcc:
+nvcc -o cudapuro cudapuro.c ema_kernel.o sma_kernel.o stochastic_kernel.o rsi_kernel.o -lcudart
+A VERSÃO PARALELA COM MPI ESTÁ EM mpipuro.c
+mpicc -o mpi_exec mpipuro.c
+para rodar a versão paralela com MPI, é necessário ter o OpenMPI instalado e rodar o comando:
+mpirun -np 4 ./mpi_exec
+o arquivo hosts.txt pode ser alterado para rodar o mpi acima.
+
+
+O TAMANHO DA JANELA É DE 14 PERÍODOS, MAS PODE SER ALTERADO EM main.c NA LINHA 
+   int window = 14;
+A EXECUÇÃO PADRÃO USA 4 PROCESSOS MPI, AINDA NÃO FOI TESTADA COM OUTROS VALORES
+
+IMPORTANTE: O MAKEFILE CONTEM O CAMINHO PARA ONDE ESTA A BIBLIOTECA RUNTIME DO CUDA, 
+PARA QUE RODASSE COM A INSTALAÇÃO PADRÃO DO CUDA NA
+DISTRIBUIÇÃO ARCH LINUX, ALTERE SE NECESSÁRIO, NAS LINHAS
+CUDA_INC = -I/opt/cuda/include
+CUDA_LIB = -L/opt/cuda/targets/x86_64-linux/lib -lcudart
+
+Para rodar:
+chmod +x test.sh
+./test.sh
+
+## COMO OS DATASETS FORAM CRIADOS ##
+foi baixado o dataset do kaggle com registros de 5 anos;
+https://www.kaggle.com/datasets/iveeaten3223times/massive-yahoo-finance-dataset
+foi dividido em datasets para cada empresa na pasta empresas, através do script 
+split_dataset.py, excluindo as colunas após a coluna Close;
+ 
+
+
+
+##TODO-LIST##
+Verificar o por quê de a versão sequencial ser mais rápida que a versão OpenMP e MPI;
+Otimizar o loop OpenMP, parece que alguns acessos à biblioteca string estão causando
+problemas de compatibilidade com o OpenMP, talvez seja necessário usar uma abordagem diferente;
+Implementar outros indicadores utilizando séries temporais
