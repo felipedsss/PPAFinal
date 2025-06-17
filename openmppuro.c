@@ -5,7 +5,7 @@
 #include <dirent.h>
 #include <sys/time.h>
 #include <omp.h>
-#define MAX_SIZE 10000
+#define MAX_SIZE 1300
 #define MAX_FILES 500
 #define FILENAME_LEN 128
 #define RESULT_COLS 5  // Close, SMA, EMA, RSI, StochK

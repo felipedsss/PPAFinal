@@ -1,5 +1,8 @@
 PROPOSTA DO TRABALHO FINAL DE PROGRAMAÇÃO PARALELA AVANÇADA 
-ALUNO: FELIPE DE SOUZA SANT'ANNA SILVEIRA
+ALUNOS: 
+FELIPE DE SOUZA SANT'ANNA SILVEIRA
+NATHÁLIA GRAMS TEIXEIRA
+
 
 ESTE TRABALHO CALCULA INDICADORES SOBRE OS PREÇOS DOS FECHAMENTOS DA EMPRESAS DO S&P 500
  UTILIZANDO MPI, OPENMP E CUDA 
@@ -14,14 +17,12 @@ e a pasta saida contém os resultados dos cálculos, que são salvos em arquivos
 Para fins de comparação há uma versão sequencial, uma versão com OpenMP e uma versão com CUDA, além da versão paralela com MPI.
 A VERSÃO SEQUENCIAL ESTÁ EM sequencial.c : compilar com gcc -o seq sequencial.c
 A VERSÃO COM OPENMP ESTÁ EM openmppuro.c : compilar com gcc -o openmp_exec openmppuro.c -fopenmp
-A VERSÃO COM CUDA ESTÁ EM cudapuro.c : 
-compilar os cuda kernels com nvcc:
-nvcc -c ema_kernel.cu -o ema_kernel.o
-nvcc -c sma_kernel.cu -o sma_kernel.o
-nvcc -c rsi_kernel.cu -o rsi_kernel.o
-nvcc -c stochastic_kernel.cu -o stochastic_kernel.o
-compilar o arquivo principal com gcc:
-nvcc -o cudapuro cudapuro.c ema_kernel.o sma_kernel.o stochastic_kernel.o rsi_kernel.o -lcudart
+A VERSÃO COM CUDA SEQUENCIAL ESTÁ EM cudapuro.cu
+nvcc -o cudapuro cudapuro.cu 
+A VERSÃO COM CUDA EM LOTE ESTÁ EM cudabatch.cu
+nvcc -o cudabatch cudabatch.cu
+TESTADO COM UMA GEFORCE GTX 750 Ti, necessário usar nvcc -arch=sm_50
+
 A VERSÃO PARALELA COM MPI ESTÁ EM mpipuro.c
 mpicc -o mpi_exec mpipuro.c
 para rodar a versão paralela com MPI, é necessário ter o OpenMPI instalado e rodar o comando:
@@ -49,11 +50,14 @@ https://www.kaggle.com/datasets/iveeaten3223times/massive-yahoo-finance-dataset
 foi dividido em datasets para cada empresa na pasta empresas, através do script 
 split_dataset.py, excluindo as colunas após a coluna Close;
  
+#RESULTADOS PRELIMINARES (i5 10400f + GTX 750 Ti)
 
-
+sequencial: 0.124095 segundos
+openmp: 0.018099 segundos
+cuda sequencial: 0.050887 segundos
+cuda batch: 0.021721 segundos
+mpi: 0.129614 segundos
 
 ##TODO-LIST##
 Verificar o por quê de a versão sequencial ser mais rápida que a versão OpenMP e MPI;
-Otimizar o loop OpenMP, parece que alguns acessos à biblioteca string estão causando
-problemas de compatibilidade com o OpenMP, talvez seja necessário usar uma abordagem diferente;
 Implementar outros indicadores utilizando séries temporais

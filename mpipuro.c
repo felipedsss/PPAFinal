@@ -5,17 +5,14 @@
 #include <mpi.h>
 #include <math.h>
 #include <sys/time.h>
+#include <sys/types.h>
+#include <unistd.h>
 
-
-
-
-
-
-
-#define MAX_SIZE 10000
+#define MAX_SIZE 1300
 #define MAX_FILES 500
-#define FILENAME_LEN 128
+#define FILENAME_LEN 512
 #define MAX_NAME 128
+
 typedef struct {
     float sma;
     float ema;
@@ -25,6 +22,12 @@ typedef struct {
 
 char filenames[MAX_FILES][FILENAME_LEN];
 int num_files = 0;
+
+int comparar_nomes(const void *a, const void *b) {
+    const char *pa = (const char *)a;
+    const char *pb = (const char *)b;
+    return strcmp(pa, pb);
+}
 
 int listar_csvs(const char *dirpath, char nomes[MAX_FILES][MAX_NAME]) {
     DIR *dir = opendir(dirpath);
@@ -37,7 +40,10 @@ int listar_csvs(const char *dirpath, char nomes[MAX_FILES][MAX_NAME]) {
     }
 
     while ((entry = readdir(dir))) {
+        if (entry->d_name[0] == '.') continue; // Ignora ocultos
+
         if (strstr(entry->d_name, ".csv")) {
+            if (count >= MAX_FILES) break;
             snprintf(nomes[count], MAX_NAME, "%s", entry->d_name);
             snprintf(filenames[count], FILENAME_LEN, "%s/%s", dirpath, entry->d_name);
             count++;
@@ -45,30 +51,30 @@ int listar_csvs(const char *dirpath, char nomes[MAX_FILES][MAX_NAME]) {
     }
 
     closedir(dir);
+    qsort(nomes, count, MAX_NAME, comparar_nomes);
+    qsort(filenames, count, FILENAME_LEN, comparar_nomes);
+    num_files = count;
     return count;
 }
 
 int load_csv(const char *filename, float *data, int max_size) {
     FILE *fp = fopen(filename, "r");
     if (!fp) {
-        perror("Erro ao abrir o arquivo");
+        perror(filename); // Mostra nome do arquivo com erro
         return -1;
     }
 
     char line[512];
     int count = 0;
-    fgets(line, sizeof(line), fp);  // ignora cabeçalho
+    fgets(line, sizeof(line), fp); // Ignora cabeçalho
 
     while (fgets(line, sizeof(line), fp) && count < max_size) {
-        char *token;
+        char *token = strtok(line, ",");
         int column = 0;
-        float close_value = 0.0;
 
-        token = strtok(line, ",");
-        while (token != NULL) {
+        while (token) {
             if (column == 4) {
-                close_value = strtof(token, NULL);
-                data[count++] = close_value;
+                data[count++] = strtof(token, NULL);
                 break;
             }
             token = strtok(NULL, ",");
@@ -79,8 +85,8 @@ int load_csv(const char *filename, float *data, int max_size) {
     fclose(fp);
     return count;
 }
-// --- Indicadores ---
-// SMA simples
+
+// Indicadores
 float calc_sma(float *data, int idx, int period) {
     if (idx < period - 1) return NAN;
     float sum = 0.0f;
@@ -89,29 +95,24 @@ float calc_sma(float *data, int idx, int period) {
     return sum / period;
 }
 
-// EMA exponencial
 float calc_ema(float *data, int idx, int period, float prev_ema) {
     float k = 2.0f / (period + 1);
     return data[idx] * k + prev_ema * (1 - k);
 }
 
-// RSI
 float calc_rsi(float *data, int idx, int period) {
     if (idx < period) return NAN;
     float gain = 0.0f, loss = 0.0f;
     for (int i = idx - period + 1; i <= idx; i++) {
         float diff = data[i] - data[i - 1];
-        if (diff > 0)
-            gain += diff;
-        else
-            loss -= diff;
+        if (diff > 0) gain += diff;
+        else loss -= diff;
     }
     if (loss == 0) return 100.0f;
     float rs = gain / loss;
     return 100.0f - (100.0f / (1.0f + rs));
 }
 
-// Stochastic %K
 float calc_stochastic_k(float *data, int idx, int period) {
     if (idx < period - 1) return NAN;
     float high = data[idx], low = data[idx];
@@ -122,7 +123,6 @@ float calc_stochastic_k(float *data, int idx, int period) {
     if (high == low) return NAN;
     return 100.0f * (data[idx] - low) / (high - low);
 }
-
 
 void processar(float *serie, int size, Indicador *out) {
     int period = 14;
@@ -136,12 +136,13 @@ void processar(float *serie, int size, Indicador *out) {
     }
 }
 
-#define TAG_TAM 1
-#define TAG_SERIE 2
-#define TAG_NOME 3
+// Tags
+#define TAG_TAM    1
+#define TAG_SERIE  2
+#define TAG_NOME   3
 #define TAG_RESULT 4
-#define TAG_TEMPO 5
-#define TAG_FIM 99  // Indica que o worker pode finalizar
+#define TAG_TEMPO  5
+#define TAG_FIM    99
 
 int main(int argc, char **argv) {
     MPI_Init(&argc, &argv);
@@ -149,81 +150,74 @@ int main(int argc, char **argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-    char nomes[MAX_FILES][MAX_NAME];
-    int num_arquivos;
-
     if (rank == 0) {
-        num_arquivos = listar_csvs("empresas", nomes);
-        int arquivos_enviados = 0, arquivos_recebidos = 0;
-        double tempo_total_workers = 0.0;
+        char nomes[MAX_FILES][MAX_NAME];
+        int num_arquivos = listar_csvs("empresas", nomes);
+        int enviados = 0, recebidos = 0;
+        double tempo_total = 0.0;
 
-        // Envia inicialmente 1 arquivo para cada worker
-        for (int i = 1; i < size && arquivos_enviados < num_arquivos; i++) {
+        for (int i = 1; i < size && enviados < num_arquivos; i++) {
             float serie[MAX_SIZE];
-            int tam = load_csv(nomes[arquivos_enviados], serie, MAX_SIZE);
+            int tam = load_csv(filenames[enviados], serie, MAX_SIZE);
             if (tam <= 0) {
-                printf("Erro ao abrir o arquivo: %s\n", nomes[arquivos_enviados]);
-                arquivos_enviados++;
-                i--; // tenta o mesmo worker novamente com o próximo arquivo
+                enviados++;
+                i--;
                 continue;
             }
             MPI_Send(&tam, 1, MPI_INT, i, TAG_TAM, MPI_COMM_WORLD);
             MPI_Send(serie, tam, MPI_FLOAT, i, TAG_SERIE, MPI_COMM_WORLD);
-            MPI_Send(nomes[arquivos_enviados], MAX_NAME, MPI_CHAR, i, TAG_NOME, MPI_COMM_WORLD);
-            arquivos_enviados++;
+            MPI_Send(nomes[enviados], MAX_NAME, MPI_CHAR, i, TAG_NOME, MPI_COMM_WORLD);
+            enviados++;
         }
 
-        // Enquanto houver arquivos por processar
-        while (arquivos_recebidos < num_arquivos) {
+        while (recebidos < num_arquivos) {
             int tam;
-            double tempo_worker;
+            double tempo;
             Indicador indicadores[MAX_SIZE];
             char nome[MAX_NAME];
             MPI_Status status;
 
-            // Recebe resultado de qualquer worker disponível
             MPI_Recv(&tam, 1, MPI_INT, MPI_ANY_SOURCE, TAG_TAM, MPI_COMM_WORLD, &status);
             int origem = status.MPI_SOURCE;
             MPI_Recv(indicadores, tam * sizeof(Indicador), MPI_BYTE, origem, TAG_RESULT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
             MPI_Recv(nome, MAX_NAME, MPI_CHAR, origem, TAG_NOME, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            MPI_Recv(&tempo_worker, 1, MPI_DOUBLE, origem, TAG_TEMPO, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            MPI_Recv(&tempo, 1, MPI_DOUBLE, origem, TAG_TEMPO, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            tempo_total += tempo;
 
-            tempo_total_workers += tempo_worker;
-
-            char caminho[256];
+            char caminho[512];
             snprintf(caminho, sizeof(caminho), "saida/mpi-%s", nome);
             FILE *f = fopen(caminho, "w");
+            if (!f) {
+                perror(caminho);
+                continue;
+            }
+
             fprintf(f, "Index,SMA,EMA,RSI,StochK\n");
             for (int j = 1; j < tam; j++) {
-                fprintf(f, "%d,%.2f,%.2f,%.2f,%.2f\n", j, indicadores[j].sma, indicadores[j].ema,
-                        indicadores[j].rsi, indicadores[j].stoch);
+                fprintf(f, "%d,%.2f,%.2f,%.2f,%.2f\n", j, indicadores[j].sma, indicadores[j].ema, indicadores[j].rsi, indicadores[j].stoch);
             }
             fclose(f);
-            arquivos_recebidos++;
+            recebidos++;
 
-            // Se ainda houver arquivos para enviar, manda mais
-            if (arquivos_enviados < num_arquivos) {
+            if (enviados < num_arquivos) {
                 float serie[MAX_SIZE];
-                int tam = load_csv(nomes[arquivos_enviados], serie, MAX_SIZE);
+                int tam = load_csv(filenames[enviados], serie, MAX_SIZE);
                 if (tam <= 0) {
-                    printf("Erro ao abrir o arquivo: %s\n", nomes[arquivos_enviados]);
-                    arquivos_enviados++;
+                    enviados++;
                     continue;
                 }
                 MPI_Send(&tam, 1, MPI_INT, origem, TAG_TAM, MPI_COMM_WORLD);
                 MPI_Send(serie, tam, MPI_FLOAT, origem, TAG_SERIE, MPI_COMM_WORLD);
-                MPI_Send(nomes[arquivos_enviados], MAX_NAME, MPI_CHAR, origem, TAG_NOME, MPI_COMM_WORLD);
-                arquivos_enviados++;
+                MPI_Send(nomes[enviados], MAX_NAME, MPI_CHAR, origem, TAG_NOME, MPI_COMM_WORLD);
+                enviados++;
             } else {
-                // Quando acabar, envia sinal de finalização
-                int tam = 0;
-                MPI_Send(&tam, 1, MPI_INT, origem, TAG_FIM, MPI_COMM_WORLD);
+                int zero = 0;
+                MPI_Send(&zero, 1, MPI_INT, origem, TAG_FIM, MPI_COMM_WORLD);
             }
         }
 
-        printf("Tempo total de CPU gasto na função processar: %.6f segundos\n", tempo_total_workers);
-    } 
-    else {
+        printf("Tempo total dos workers: %.6f segundos\n", tempo_total);
+    } else {
         while (1) {
             int tam;
             MPI_Status status;
