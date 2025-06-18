@@ -58,6 +58,20 @@ cuda sequencial: 0.050887 segundos
 cuda batch: 0.021721 segundos
 mpi: 0.129614 segundos
 
+#RESULTADO PRELIMINAR USANDO OPENCL (GPU MALI-G68 MP5 - 5 NÚCLEOS Samsung A35)
+
+opencl tempo de cálculo indicadores na GPU: 0.506178 s
+#INSTRUCOES PARA UTILIZAR A GPU NUM CELULAR ANDROID:
+1 - Instalar uma versao recente do Termux (emulador de terminal)
+pkg update 
+pkg install clang opencl opencl-headers
+2 - Copiar as bibliotecas da GPU do sistema  para o path das bibliotecas do Termux
+cp /vendor/lib64/libOpenCL.so $PREFIX/lib/
+cp /vendor/lib64/libion_exynos.so $PREFIX/lib/
+cp /vendor/lib64/libGLES_mali.so $PREFIX/lib/
+3 - Compilar com CLang
+clang opencl.c -o gpu_calc -lOpenCL -O3
+4 - Executar declarando o local para as bibliotecas
+LD_LIBRARY_PATH=$PREFIX/lib ./gpu_calc
 ##TODO-LIST##
 Verificar o por quê de a versão sequencial ser mais rápida que a versão OpenMP e MPI;
-Implementar outros indicadores utilizando séries temporais
