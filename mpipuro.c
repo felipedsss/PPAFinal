@@ -1,243 +1,226 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 #include <string.h>
 #include <dirent.h>
-#include <mpi.h>
-#include <math.h>
 #include <sys/time.h>
-#include <sys/types.h>
-#include <unistd.h>
+#include <mpi.h>
 
 #define MAX_SIZE 1300
 #define MAX_FILES 500
-#define FILENAME_LEN 512
-#define MAX_NAME 128
-
-typedef struct {
-    float sma;
-    float ema;
-    float rsi;
-    float stoch;
-} Indicador;
+#define FILENAME_LEN 128
+#define RESULT_COLS 5
 
 char filenames[MAX_FILES][FILENAME_LEN];
 int num_files = 0;
 
-int comparar_nomes(const void *a, const void *b) {
-    const char *pa = (const char *)a;
-    const char *pb = (const char *)b;
-    return strcmp(pa, pb);
-}
-
-int listar_csvs(const char *dirpath, char nomes[MAX_FILES][MAX_NAME]) {
+void listar_csvs(const char *dirpath) {
     DIR *dir = opendir(dirpath);
     struct dirent *entry;
-    int count = 0;
-
     if (!dir) {
         perror("Erro ao abrir diretório");
         exit(1);
     }
-
     while ((entry = readdir(dir))) {
-        if (entry->d_name[0] == '.') continue; // Ignora ocultos
-
         if (strstr(entry->d_name, ".csv")) {
-            if (count >= MAX_FILES) break;
-            snprintf(nomes[count], MAX_NAME, "%s", entry->d_name);
-            snprintf(filenames[count], FILENAME_LEN, "%s/%s", dirpath, entry->d_name);
-            count++;
+            snprintf(filenames[num_files], FILENAME_LEN, "%s/%s", dirpath, entry->d_name);
+            num_files++;
+            if (num_files >= MAX_FILES) break;
         }
     }
-
     closedir(dir);
-    qsort(nomes, count, MAX_NAME, comparar_nomes);
-    qsort(filenames, count, FILENAME_LEN, comparar_nomes);
-    num_files = count;
-    return count;
 }
 
-int load_csv(const char *filename, float *data, int max_size) {
+int load_csv(const char *filename, float *data) {
     FILE *fp = fopen(filename, "r");
     if (!fp) {
-        perror(filename); // Mostra nome do arquivo com erro
+        perror("Erro ao abrir arquivo");
         return -1;
     }
-
     char line[512];
     int count = 0;
-    fgets(line, sizeof(line), fp); // Ignora cabeçalho
-
-    while (fgets(line, sizeof(line), fp) && count < max_size) {
-        char *token = strtok(line, ",");
-        int column = 0;
-
-        while (token) {
-            if (column == 4) {
+    fgets(line, sizeof(line), fp);  // pular cabeçalho
+    while (fgets(line, sizeof(line), fp) && count < MAX_SIZE) {
+        char *token;
+        int col = 0;
+        token = strtok(line, ",");
+        while (token != NULL) {
+            if (col == 4) {
                 data[count++] = strtof(token, NULL);
                 break;
             }
             token = strtok(NULL, ",");
-            column++;
+            col++;
         }
     }
-
     fclose(fp);
     return count;
 }
 
-// Indicadores
-float calc_sma(float *data, int idx, int period) {
-    if (idx < period - 1) return NAN;
-    float sum = 0.0f;
-    for (int i = idx - period + 1; i <= idx; i++)
-        sum += data[i];
-    return sum / period;
-}
-
-float calc_ema(float *data, int idx, int period, float prev_ema) {
+void calcular_indicadores(float *serie, int size, float resultado[MAX_SIZE][RESULT_COLS], int period) {
     float k = 2.0f / (period + 1);
-    return data[idx] * k + prev_ema * (1 - k);
-}
-
-float calc_rsi(float *data, int idx, int period) {
-    if (idx < period) return NAN;
-    float gain = 0.0f, loss = 0.0f;
-    for (int i = idx - period + 1; i <= idx; i++) {
-        float diff = data[i] - data[i - 1];
-        if (diff > 0) gain += diff;
-        else loss -= diff;
-    }
-    if (loss == 0) return 100.0f;
-    float rs = gain / loss;
-    return 100.0f - (100.0f / (1.0f + rs));
-}
-
-float calc_stochastic_k(float *data, int idx, int period) {
-    if (idx < period - 1) return NAN;
-    float high = data[idx], low = data[idx];
-    for (int i = idx - period + 1; i <= idx; i++) {
-        if (data[i] > high) high = data[i];
-        if (data[i] < low)  low = data[i];
-    }
-    if (high == low) return NAN;
-    return 100.0f * (data[idx] - low) / (high - low);
-}
-
-void processar(float *serie, int size, Indicador *out) {
-    int period = 14;
+    float k_antes = 1.0f - k;
     float ema = serie[0];
-    for (int i = 1; i < size; i++) {
-        out[i].sma = calc_sma(serie, i, period);
-        ema = calc_ema(serie, i, period, ema);
-        out[i].ema = ema;
-        out[i].rsi = calc_rsi(serie, i, period);
-        out[i].stoch = calc_stochastic_k(serie, i, period);
+    float sum_sma = serie[0], sum_gain = 0.0f, sum_loss = 0.0f;
+    float low = serie[0], high = serie[0];
+    resultado[0][0] = serie[0];
+    resultado[0][1] = serie[0];
+    resultado[0][2] = ema;
+    resultado[0][3] = 50.0f;
+    resultado[0][4] = 50.0f;
+
+    for (int j = 1; j < period && j < size; j++) {
+        float close = serie[j];
+        resultado[j][0] = close;
+        sum_sma += close;
+        resultado[j][1] = sum_sma / (j + 1);
+        ema = close * k + ema * k_antes;
+        resultado[j][2] = ema;
+
+        float gain = 0.0f, loss = 0.0f;
+        for (int p = 1; p <= j; p++) {
+            float diff = serie[p] - serie[p - 1];
+            if (diff > 0) gain += diff;
+            else loss -= diff;
+        }
+        float rs = (loss == 0.0f) ? 0.0f : gain / loss;
+        resultado[j][3] = (loss == 0.0f) ? 100.0f : (100.0f - (100.0f / (1.0f + rs)));
+
+        float local_low = close, local_high = close;
+        for (int k = 0; k <= j; k++) {
+            float val = serie[k];
+            if (val < local_low) local_low = val;
+            if (val > local_high) local_high = val;
+        }
+        resultado[j][4] = (local_high == local_low) ? 50.0f : (100.0f * (close - local_low) / (local_high - local_low));
+    }
+
+    sum_gain /= period;
+    sum_loss /= period;
+
+    for (int j = period; j < size; j++) {
+        float close = serie[j];
+        resultado[j][0] = close;
+        sum_sma += close - serie[j - period];
+        resultado[j][1] = sum_sma / period;
+        ema = close * k + ema * k_antes;
+        resultado[j][2] = ema;
+
+        float diff = close - serie[j - 1];
+        float gain = (diff > 0) ? diff : 0.0f;
+        float loss = (diff < 0) ? -diff : 0.0f;
+        sum_gain = (sum_gain * (period - 1) + gain) / period;
+        sum_loss = (sum_loss * (period - 1) + loss) / period;
+        float rs = (sum_loss == 0.0f) ? 0.0f : (sum_gain / sum_loss);
+        resultado[j][3] = (sum_loss == 0.0f) ? 100.0f : (100.0f - (100.0f / (1.0f + rs)));
+
+        float val_out = serie[j - period];
+        if (close >= high) high = close;
+        else if (val_out == high) {
+            high = serie[j - period + 1];
+            for (int m = j - period + 2; m <= j; m++) if (serie[m] > high) high = serie[m];
+        }
+        if (close <= low) low = close;
+        else if (val_out == low) {
+            low = serie[j - period + 1];
+            for (int m = j - period + 2; m <= j; m++) if (serie[m] < low) low = serie[m];
+        }
+        resultado[j][4] = (high == low) ? NAN : (100.0f * (close - low) / (high - low));
     }
 }
 
-// Tags
-#define TAG_TAM    1
-#define TAG_SERIE  2
-#define TAG_NOME   3
-#define TAG_RESULT 4
-#define TAG_TEMPO  5
-#define TAG_FIM    99
+void salvar_csv(const char *output_path, float resultado[MAX_SIZE][RESULT_COLS], int tamanho) {
+    FILE *out = fopen(output_path, "w");
+    if (!out) {
+        perror("Erro ao criar arquivo");
+        return;
+    }
+    fprintf(out, "Index,Close,SMA,EMA,RSI,StochK\n");
+    for (int i = 0; i < tamanho; i++) {
+        fprintf(out, "%d,%.2f,%.2f,%.2f,%.2f,%.2f\n", i,
+                resultado[i][0], resultado[i][1], resultado[i][2],
+                resultado[i][3], resultado[i][4]);
+    }
+    fclose(out);
+}
 
 int main(int argc, char **argv) {
     MPI_Init(&argc, &argv);
-    int rank, size;
+    int rank, nprocs;
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    MPI_Comm_size(MPI_COMM_WORLD, &nprocs);
+    const int period = 14;
 
     if (rank == 0) {
-        char nomes[MAX_FILES][MAX_NAME];
-        int num_arquivos = listar_csvs("empresas", nomes);
-        int enviados = 0, recebidos = 0;
-        double tempo_total = 0.0;
+        listar_csvs("empresas");
 
-        for (int i = 1; i < size && enviados < num_arquivos; i++) {
-            float serie[MAX_SIZE];
-            int tam = load_csv(filenames[enviados], serie, MAX_SIZE);
-            if (tam <= 0) {
-                enviados++;
-                i--;
-                continue;
-            }
-            MPI_Send(&tam, 1, MPI_INT, i, TAG_TAM, MPI_COMM_WORLD);
-            MPI_Send(serie, tam, MPI_FLOAT, i, TAG_SERIE, MPI_COMM_WORLD);
-            MPI_Send(nomes[enviados], MAX_NAME, MPI_CHAR, i, TAG_NOME, MPI_COMM_WORLD);
-            enviados++;
+        float series[MAX_FILES][MAX_SIZE];
+        int sizes[MAX_FILES];
+        float resultados[MAX_FILES][MAX_SIZE][RESULT_COLS];
+
+        for (int i = 0; i < num_files; i++) {
+            sizes[i] = load_csv(filenames[i], series[i]);
         }
 
-        while (recebidos < num_arquivos) {
-            int tam;
-            double tempo;
-            Indicador indicadores[MAX_SIZE];
-            char nome[MAX_NAME];
-            MPI_Status status;
+        struct timeval start, end;
+        gettimeofday(&start, NULL);
 
-            MPI_Recv(&tam, 1, MPI_INT, MPI_ANY_SOURCE, TAG_TAM, MPI_COMM_WORLD, &status);
-            int origem = status.MPI_SOURCE;
-            MPI_Recv(indicadores, tam * sizeof(Indicador), MPI_BYTE, origem, TAG_RESULT, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            MPI_Recv(nome, MAX_NAME, MPI_CHAR, origem, TAG_NOME, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            MPI_Recv(&tempo, 1, MPI_DOUBLE, origem, TAG_TEMPO, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            tempo_total += tempo;
+        int next = 0;
+        for (int r = 1; r < nprocs && next < num_files; r++, next++) {
+            MPI_Send(&sizes[next], 1, MPI_INT, r, 0, MPI_COMM_WORLD);
+            MPI_Send(series[next], MAX_SIZE, MPI_FLOAT, r, 0, MPI_COMM_WORLD);
+        }
 
-            char caminho[512];
-            snprintf(caminho, sizeof(caminho), "saida/mpi-%s", nome);
-            FILE *f = fopen(caminho, "w");
-            if (!f) {
-                perror(caminho);
-                continue;
-            }
+        for (int i = 0; i < num_files; i++) {
+            int src = (i < nprocs - 1) ? i + 1 : MPI_ANY_SOURCE;
+            float resultado[MAX_SIZE][RESULT_COLS];
+            int recv_index;
+            MPI_Recv(&recv_index, 1, MPI_INT, src, 1, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            MPI_Recv(resultado, MAX_SIZE * RESULT_COLS, MPI_FLOAT, src, 2, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            memcpy(resultados[recv_index], resultado, sizeof(resultado));
 
-            fprintf(f, "Index,SMA,EMA,RSI,StochK\n");
-            for (int j = 1; j < tam; j++) {
-                fprintf(f, "%d,%.2f,%.2f,%.2f,%.2f\n", j, indicadores[j].sma, indicadores[j].ema, indicadores[j].rsi, indicadores[j].stoch);
-            }
-            fclose(f);
-            recebidos++;
-
-            if (enviados < num_arquivos) {
-                float serie[MAX_SIZE];
-                int tam = load_csv(filenames[enviados], serie, MAX_SIZE);
-                if (tam <= 0) {
-                    enviados++;
-                    continue;
-                }
-                MPI_Send(&tam, 1, MPI_INT, origem, TAG_TAM, MPI_COMM_WORLD);
-                MPI_Send(serie, tam, MPI_FLOAT, origem, TAG_SERIE, MPI_COMM_WORLD);
-                MPI_Send(nomes[enviados], MAX_NAME, MPI_CHAR, origem, TAG_NOME, MPI_COMM_WORLD);
-                enviados++;
+            if (next < num_files) {
+                MPI_Send(&sizes[next], 1, MPI_INT, src, 0, MPI_COMM_WORLD);
+                MPI_Send(series[next], MAX_SIZE, MPI_FLOAT, src, 0, MPI_COMM_WORLD);
+                recv_index = next++;
+                MPI_Send(&recv_index, 1, MPI_INT, src, 3, MPI_COMM_WORLD);
             } else {
-                int zero = 0;
-                MPI_Send(&zero, 1, MPI_INT, origem, TAG_FIM, MPI_COMM_WORLD);
+                int fim = -1;
+                MPI_Send(&fim, 1, MPI_INT, src, 0, MPI_COMM_WORLD);
             }
         }
 
-        printf("Tempo total dos workers: %.6f segundos\n", tempo_total);
+        calcular_indicadores(series[0], sizes[0], resultados[0], period);
+
+        gettimeofday(&end, NULL);
+        double tempo = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1e6;
+        printf("Tempo cálculo indicadores: %.6f s\n", tempo);
+
+        for (int i = 0; i < num_files; i++) {
+            const char *nome = strrchr(filenames[i], '/');
+            if (!nome) nome = filenames[i]; else nome++;
+            char nome_empresa[64];
+            strncpy(nome_empresa, nome, strchr(nome, '.') - nome);
+            nome_empresa[strchr(nome, '.') - nome] = '\0';
+            char output_path[256];
+            snprintf(output_path, sizeof(output_path), "saida/mpi-%s.csv", nome_empresa);
+            salvar_csv(output_path, resultados[i], sizes[i]);
+        }
     } else {
         while (1) {
-            int tam;
-            MPI_Status status;
-            MPI_Recv(&tam, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-            if (status.MPI_TAG == TAG_FIM || tam == 0) break;
+            int size;
+            MPI_Recv(&size, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            if (size == -1) break;
 
             float serie[MAX_SIZE];
-            char nome[MAX_NAME];
-            MPI_Recv(serie, tam, MPI_FLOAT, 0, TAG_SERIE, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            MPI_Recv(nome, MAX_NAME, MPI_CHAR, 0, TAG_NOME, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            float resultado[MAX_SIZE][RESULT_COLS];
+            MPI_Recv(serie, MAX_SIZE, MPI_FLOAT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            calcular_indicadores(serie, size, resultado, period);
 
-            Indicador indicadores[MAX_SIZE];
-            double start = MPI_Wtime();
-            processar(serie, tam, indicadores);
-            double elapsed = MPI_Wtime() - start;
-
-            MPI_Send(&tam, 1, MPI_INT, 0, TAG_TAM, MPI_COMM_WORLD);
-            MPI_Send(indicadores, tam * sizeof(Indicador), MPI_BYTE, 0, TAG_RESULT, MPI_COMM_WORLD);
-            MPI_Send(nome, MAX_NAME, MPI_CHAR, 0, TAG_NOME, MPI_COMM_WORLD);
-            MPI_Send(&elapsed, 1, MPI_DOUBLE, 0, TAG_TEMPO, MPI_COMM_WORLD);
+            int index;
+            MPI_Recv(&index, 1, MPI_INT, 0, 3, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+            MPI_Send(&index, 1, MPI_INT, 0, 1, MPI_COMM_WORLD);
+            MPI_Send(resultado, MAX_SIZE * RESULT_COLS, MPI_FLOAT, 0, 2, MPI_COMM_WORLD);
         }
     }
 

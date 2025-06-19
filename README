@@ -12,6 +12,17 @@ ATUALMENTE ESTÁ IMPLEMENTADO:
 -EMA (MÉDIA MÓVEL EXPONENCIAL)
 -STOCHASTIC K (ÍNDICE DE MOMENTO ESTOCÁSTICO K)
 -STOCHASTIC D (ÍNDICE DE MOMENTO ESTOCÁSTICO D)
+
+###NOTAS DA ÚLTIMA ATUALIZAÇÃO### 19 DE JUNHO DE 2025 - 02:00
+ - AS FUNÇÕES FORAM "DESENROLADAS", E COLOCADAS EM UM ÚNICO LOOP PARA PERCORRER AS SÉRIES TEMPORAIS;
+ - FOI USADO O MÉTODO WILDER PARA RSI E UMA ABORDAGEM QUE PERMITA AO ESTOCÁSTICO SÓ VARRER A JANELA
+ CASO O VALOR A SER EXCLUÍDO DA JANELA SEJA MAIOR QUE O MÁXIMO OU MENOR QUE O MÍNIMO, POUPANDO LOOPS E TESTES;
+ - VÁRIAS VARIÁVEIS FORAM REAPROVEITADAS E VÁRIOS TESTES FORAM RETIRADOS
+ - ESTAS MUDANÇAS TIVERAM COMO OBJETIVO AUMENTAR A PROPORÇÃO DE CÁLCULOS ARITMÉTICOS, PARA QUE FOSSE POSSÍVEL
+ TRANSCREVER O CÓDIGO PARA CUDA E OPENCL COM UM BOM APROVEITAMENTO, NO ENTANTO O OPENCL AINDA NÃO FOI IMPLEMENTADO
+
+
+
 A pasta empresas contém os datasets de cada empresa, que foram divididos através do script split_dataset.py,
 e a pasta saida contém os resultados dos cálculos, que são salvos em arquivos CSV.
 Para fins de comparação há uma versão sequencial, uma versão com OpenMP e uma versão com CUDA, além da versão paralela com MPI.
@@ -58,6 +69,15 @@ cuda sequencial: 0.050887 segundos
 cuda batch: 0.021721 segundos
 mpi: 0.129614 segundos
 
+#RESULTADOS DA NOVA VERSÃO (i5 2500 + GTX 1050 Ti)
+
+
+sequencial: 0.014434 segundos
+openmp 4 threads: 0.005442 segundos
+cuda sequencial: 0.003670 segundos
+mpi: 0.276731 segundos (ainda não foi desenvolvido um método para que seja possívle medir o tempo no MPI sem levar em conta o tempo de leitura dos arquivos)
+opencl: 0.149792 segundos (ainda não foi desenvolvido um método que permita a execução os cálculos atualizados de maneira unificada)
+
 #RESULTADO PRELIMINAR USANDO OPENCL (GPU MALI-G68 MP5 - 5 NÚCLEOS Samsung A35)
 
 opencl tempo de cálculo indicadores na GPU: 0.506178 s
@@ -73,5 +93,9 @@ cp /vendor/lib64/libGLES_mali.so $PREFIX/lib/
 clang opencl.c -o gpu_calc -lOpenCL -O3
 4 - Executar declarando o local para as bibliotecas
 LD_LIBRARY_PATH=$PREFIX/lib ./gpu_calc
+
+
+
+
 ##TODO-LIST##
 Verificar o por quê de a versão sequencial ser mais rápida que a versão OpenMP e MPI;

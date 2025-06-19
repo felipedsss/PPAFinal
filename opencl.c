@@ -295,7 +295,7 @@ int main() {
             nome_empresa[strchr(nome_arquivo, '.') - nome_arquivo] = '\0';
 
             char output_path[256];
-            snprintf(output_path, sizeof(output_path), "%s/sequencial-%s.csv", dir_saida, nome_empresa);
+            snprintf(output_path, sizeof(output_path), "%s/opencl-%s.csv", dir_saida, nome_empresa);
 
             FILE *out = fopen(output_path, "w");
             if (!out) {

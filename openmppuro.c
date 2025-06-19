@@ -68,64 +68,6 @@ int load_csv(const char *filename, float *data, int max_size) {
     return count;
 }
 
-// --- Indicadores ---
-// SMA simples
-float calc_sma(float *data, int idx, int period) {
-    if (idx < period - 1) return NAN;
-    float sum = 0.0f;
-    for (int i = idx - period + 1; i <= idx; i++)
-        sum += data[i];
-    return sum / period;
-}
-
-// EMA exponencial
-float calc_ema(float *data, int idx, int period, float prev_ema) {
-    float k = 2.0f / (period + 1);
-    return data[idx] * k + prev_ema * (1 - k);
-}
-
-// RSI
-float calc_rsi(float *data, int idx, int period) {
-    if (idx < period) return NAN;
-    float gain = 0.0f, loss = 0.0f;
-    for (int i = idx - period + 1; i <= idx; i++) {
-        float diff = data[i] - data[i - 1];
-        if (diff > 0)
-            gain += diff;
-        else
-            loss -= diff;
-    }
-    if (loss == 0) return 100.0f;
-    float rs = gain / loss;
-    return 100.0f - (100.0f / (1.0f + rs));
-}
-
-// Stochastic %K
-float calc_stochastic_k(float *data, int idx, int period) {
-    if (idx < period - 1) return NAN;
-    float high = data[idx], low = data[idx];
-    for (int i = idx - period + 1; i <= idx; i++) {
-        if (data[i] > high) high = data[i];
-        if (data[i] < low)  low = data[i];
-    }
-    if (high == low) return NAN;
-    return 100.0f * (data[idx] - low) / (high - low);
-}
-
-// --- Processar uma empresa: preencher resultados [linhas][colunas] ---
-void processar_empresa(float *serie, int tamanho, float **resultados) {
-    int period = 14;
-    float ema = serie[0];
-
-    for (int i = 0; i < tamanho; i++) {
-        resultados[i][0] = serie[i];                    // Close
-        resultados[i][1] = calc_sma(serie, i, period); // SMA
-        ema = (i == 0) ? serie[0] : calc_ema(serie, i, period, ema);
-        resultados[i][2] = ema;                         // EMA
-        resultados[i][3] = calc_rsi(serie, i, period); // RSI
-        resultados[i][4] = calc_stochastic_k(serie, i, period); // StochK
-    }
-}
 
 // --- Salvar CSV de saída ---
 void salvar_csv(const char *output_path, float **resultados, int tamanho) {
@@ -180,11 +122,134 @@ int main() {
 
     gettimeofday(&start, NULL);
 
-    // Processar todas as séries
-    #pragma omp parallel for
+
+    #pragma omp parallel for schedule(static)
+
     for (int i = 0; i < num_files; i++) {
+            // Processar todas as séries
+            int period = 14;
+            float k = 2.0f / (period + 1);
+            float k_antes = 1.0f - k;
         if (sizes[i] > 0) {
-            processar_empresa(series[i], sizes[i], resultados[i]);
+            //const int period = 14;
+            float close = series[i][0];
+            float ema = close;
+
+            float sum_sma = close;
+            float sum_gain = 0.0f, sum_loss = 0.0f;
+            float diff = 0.0f;
+            float low = close, high = close;
+            //para j = 0, ou seja, primeiro elemento
+            
+             // SMA inicializado com o primeiro Close
+            resultados[i][0][0] = close; // Close
+            resultados[i][0][1] = sum_sma; // SMA (não calculado)
+            resultados[i][0][2] = close; // EMA (inicializado com o primeiro Close)
+            resultados[i][0][3] = 50.0f; // RSI (não calculado)
+            resultados[i][0][4] = 50.0f; // Stochastic %K
+            // para j<period, SMA não é calculado, mas EMA é inicializado
+            float gain = 0.0f, loss = 0.0f, rs=0.0f;
+            for (int j = 1; j < period && j < sizes[i]; j++) {
+                float close = series[i][j];
+                resultados[i][j][0] = close; // Close
+
+                // --- SMA cumulativa ---
+                sum_sma += close;
+                resultados[i][j][1] = sum_sma / (j + 1);
+
+                // --- EMA exponencial com suavização inicial ---
+                ema = close * k + ema * k_antes;
+                resultados[i][j][2] = ema;
+
+                // --- RSI com period = j ---
+                
+                for (int k = 1; k <= j; k++) {
+                    diff = series[i][k] - series[i][k - 1];
+                if (diff > 0) sum_gain += diff;
+                else          sum_loss -= diff;
+                }
+                if (sum_loss == 0.0f) {
+                    resultados[i][j][3] = 100.0f; // RSI 100 se não houver perda
+                } else {
+                    rs = sum_gain / sum_loss;
+                    resultados[i][j][3] = 100.0f - (100.0f / (1.0f + rs));
+                }
+ 
+
+                // --- Stochastic %K com period = j ---
+                
+                for (int k = 0; k <= j; k++) {
+                    float val = series[i][k];
+                    if (val < low) low = val;
+                    if (val > high) high = val;
+                }
+                resultados[i][j][4] = (high == low) ? 50.0f : (100.0f * (close - low) / (high - low));
+            }
+            // inicializando parametros do RSI
+            sum_gain /= period;
+            sum_loss /= period;
+            // a partir de j = period, os indicadores são calculados com a janela period
+            for (int j = period; j < sizes[i]; j++) {
+
+                float close = series[i][j];
+                resultados[i][j][0] = close; // Close
+
+                // --- SMA (rolling sum) ---
+
+                    sum_sma += close - series[i][j - period];
+                    resultados[i][j][1] = sum_sma / period;
+                
+
+                // --- EMA (exponencial) ---
+
+                ema = close * k + ema * k_antes;
+                resultados[i][j][2] = ema;
+
+                // --- RSI (rolling gain/loss pelo método de Wilder) ---
+
+                diff = series[i][j] - series[i][j - 1];
+                gain = (diff > 0) ? diff : 0.0f;
+                loss = (diff < 0) ? -diff : 0.0f;
+
+                sum_gain = (sum_gain * (period - 1) + gain) / period;
+                sum_loss = (sum_loss * (period - 1) + loss) / period;
+
+                rs = (sum_loss == 0.0f) ? 0.0f : (sum_gain / sum_loss);
+                resultados[i][j][3] = (sum_loss == 0.0f) ? 100.0f : (100.0f - (100.0f / (1.0f + rs)));
+
+                // --- Stochastic %K ---
+
+               
+                    float val_out = series[i][j - period]; // valor que saiu da janela
+                    float val_in = close;                  // valor que entrou
+
+                    // Atualiza máximo
+                    if (close >= high) {
+                        high = close;
+                    } else if (val_out == high) {
+                        // Recalcular high
+                        high = series[i][j - period + 1];
+                        for (int m = j - period + 2; m <= j; m++) {
+                            if (series[i][m] > high)
+                                high = series[i][m];
+                        }
+                    }
+
+                    // Atualiza mínimo
+                    if (close <= low) {
+                        low = close;
+                    } else if (val_out == low) {
+                        // Recalcular low
+                        low = series[i][j - period + 1];
+                        for (int m = j - period + 2; m <= j; m++) {
+                            if (series[i][m] < low)
+                                low = series[i][m];
+                        }
+                    }
+
+                    // Calcular Stochastic %K
+                resultados[i][j][4] = (high == low) ? NAN : (100.0f * (close - low) / (high - low));
+            }
         }
     }
 
