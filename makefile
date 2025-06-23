@@ -16,7 +16,7 @@ MPICC = mpicc
 NVCC = nvcc
 
 # Flags
-CFLAGS = -fopenmp
+CFLAGS = -fopenmp -Wall
 CUDA_INC = -I/opt/cuda/include
 CUDA_LIB = -L/opt/cuda/targets/x86_64-linux/lib -lcudart
 
