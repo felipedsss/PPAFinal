@@ -1,0 +1,122 @@
+RESULTADOS PARA OPENMP
+1 THREAD
+Tempo cálculo indicadores: 0.007922 s
+Tempo cálculo indicadores: 0.007939 s
+Tempo cálculo indicadores: 0.007904 s
+Tempo cálculo indicadores: 0.008147 s
+Tempo cálculo indicadores: 0.008433 s
+Tempo cálculo indicadores: 0.007895 s
+Tempo cálculo indicadores: 0.007896 s
+Tempo cálculo indicadores: 0.008025 s
+Tempo cálculo indicadores: 0.007992 s
+Tempo cálculo indicadores: 0.007921 s
+2 THREAD
+Tempo cálculo indicadores: 0.005756 s
+Tempo cálculo indicadores: 0.006207 s
+Tempo cálculo indicadores: 0.004063 s
+Tempo cálculo indicadores: 0.004082 s
+Tempo cálculo indicadores: 0.004135 s
+Tempo cálculo indicadores: 0.004169 s
+Tempo cálculo indicadores: 0.004120 s
+Tempo cálculo indicadores: 0.004405 s
+Tempo cálculo indicadores: 0.004096 s
+Tempo cálculo indicadores: 0.004074 s
+3 THREAD
+Tempo cálculo indicadores: 0.002780 s
+Tempo cálculo indicadores: 0.002835 s
+Tempo cálculo indicadores: 0.002799 s
+Tempo cálculo indicadores: 0.002802 s
+Tempo cálculo indicadores: 0.002812 s
+Tempo cálculo indicadores: 0.002842 s
+Tempo cálculo indicadores: 0.002779 s
+Tempo cálculo indicadores: 0.002858 s
+Tempo cálculo indicadores: 0.002782 s
+Tempo cálculo indicadores: 0.002777 s
+4 THREAD
+Tempo cálculo indicadores: 0.002331 s
+Tempo cálculo indicadores: 0.002340 s
+Tempo cálculo indicadores: 0.002214 s
+Tempo cálculo indicadores: 0.002204 s
+Tempo cálculo indicadores: 0.002272 s
+Tempo cálculo indicadores: 0.002281 s
+Tempo cálculo indicadores: 0.002278 s
+Tempo cálculo indicadores: 0.002271 s
+Tempo cálculo indicadores: 0.002620 s
+Tempo cálculo indicadores: 0.002301 s
+5 THREAD
+Tempo cálculo indicadores: 0.002550 s
+Tempo cálculo indicadores: 0.002162 s
+Tempo cálculo indicadores: 0.002571 s
+Tempo cálculo indicadores: 0.002032 s
+Tempo cálculo indicadores: 0.002590 s
+Tempo cálculo indicadores: 0.002592 s
+Tempo cálculo indicadores: 0.002083 s
+Tempo cálculo indicadores: 0.002415 s
+Tempo cálculo indicadores: 0.002079 s
+Tempo cálculo indicadores: 0.002088 s
+6 THREAD
+Tempo cálculo indicadores: 0.002350 s
+Tempo cálculo indicadores: 0.002325 s
+Tempo cálculo indicadores: 0.002471 s
+Tempo cálculo indicadores: 0.007428 s
+Tempo cálculo indicadores: 0.002360 s
+Tempo cálculo indicadores: 0.002433 s
+Tempo cálculo indicadores: 0.002314 s
+Tempo cálculo indicadores: 0.002362 s
+Tempo cálculo indicadores: 0.002378 s
+Tempo cálculo indicadores: 0.002388 s
+7 THREAD
+Tempo cálculo indicadores: 0.002103 s
+Tempo cálculo indicadores: 0.002093 s
+Tempo cálculo indicadores: 0.002142 s
+Tempo cálculo indicadores: 0.002106 s
+Tempo cálculo indicadores: 0.002108 s
+Tempo cálculo indicadores: 0.002193 s
+Tempo cálculo indicadores: 0.002194 s
+Tempo cálculo indicadores: 0.002080 s
+Tempo cálculo indicadores: 0.002116 s
+Tempo cálculo indicadores: 0.002168 s
+8 THREAD
+Tempo cálculo indicadores: 0.002049 s
+Tempo cálculo indicadores: 0.002111 s
+Tempo cálculo indicadores: 0.002039 s
+Tempo cálculo indicadores: 0.002230 s
+Tempo cálculo indicadores: 0.002146 s
+Tempo cálculo indicadores: 0.001999 s
+Tempo cálculo indicadores: 0.002131 s
+Tempo cálculo indicadores: 0.002031 s
+Tempo cálculo indicadores: 0.002051 s
+Tempo cálculo indicadores: 0.002055 s
+RESULTADOS PARA MPI
+Tempo cálculo indicadores: 0.011218 s
+Tempo cálculo indicadores: 0.010639 s
+Tempo cálculo indicadores: 0.010176 s
+Tempo cálculo indicadores: 0.010820 s
+Tempo cálculo indicadores: 0.010740 s
+Tempo cálculo indicadores: 0.010379 s
+Tempo cálculo indicadores: 0.010691 s
+Tempo cálculo indicadores: 0.010636 s
+Tempo cálculo indicadores: 0.010239 s
+Tempo cálculo indicadores: 0.010512 s
+RESULTADOS PARA CUDA
+Tempo cálculo indicadores: 0.008330 s
+Tempo cálculo indicadores: 0.008462 s
+Tempo cálculo indicadores: 0.008222 s
+Tempo cálculo indicadores: 0.008244 s
+Tempo cálculo indicadores: 0.008328 s
+Tempo cálculo indicadores: 0.008227 s
+Tempo cálculo indicadores: 0.008325 s
+Tempo cálculo indicadores: 0.008190 s
+Tempo cálculo indicadores: 0.008169 s
+Tempo cálculo indicadores: 0.009304 s
+RESULTADOS PARA OPENCL
+Tempo cálculo indicadores na GPU: 0.099788 s
+Tempo cálculo indicadores na GPU: 0.100437 s
+Tempo cálculo indicadores na GPU: 0.100810 s
+Tempo cálculo indicadores na GPU: 0.098420 s
+Tempo cálculo indicadores na GPU: 0.100600 s
+Tempo cálculo indicadores na GPU: 0.099144 s
+Tempo cálculo indicadores na GPU: 0.100450 s
+Tempo cálculo indicadores na GPU: 0.101021 s
+Tempo cálculo indicadores na GPU: 0.101629 s
+Tempo cálculo indicadores na GPU: 0.099356 s
