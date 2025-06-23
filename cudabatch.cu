@@ -1,249 +1,99 @@
-// Adaptado para processar todas as empresas em lote (kernel 2D)
-// Indicadores SMA, EMA, RSI e Stochastic (com CUDA kernel 2D)
-
 #include <cuda_runtime.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
 #include <math.h>
+#include <sys/time.h>
+
 #define MAX_SIZE 1300
-#define MAX_FILES 1000
+#define MAX_FILES 5000
 #define FILENAME_LEN 256
 #define RESULT_COLS 5
+#define PERIOD 14
+struct timeval start, end;
 
 char filenames[MAX_FILES][FILENAME_LEN];
 int num_files = 0;
 
+__global__ void indicadores_kernel_2D(float *series, int *sizes, float *resultados, int max_size, int result_cols, int period) {
+    int file_idx = blockIdx.x;
+    int j = threadIdx.x;
 
-// --- Acesso linear para 2D ---
-#define IDX(s,i,len) ((s)*(len) + (i))
+    float *serie = &series[file_idx * max_size];
+    float *res = &resultados[file_idx * max_size * result_cols];
+    int size = sizes[file_idx];
+    if (j >= size) return;
 
-// --- Kernel SMA com stride ---
-__global__ void sma_kernel_stride(const float *input, float *output,
-                                  int len, int window, int total_series)
-{
-    int series_idx = blockIdx.x;
-    int tid        = threadIdx.x;
-    int stride     = blockDim.x;
+    float k = 2.0f / (period + 1);
+    float k_antes = 1.0f - k;
 
-    if (series_idx >= total_series) return;
-
-    // Cada thread processa índices i = tid, tid+stride, tid+2*stride, ...
-    for (int i = tid; i < len; i += stride) {
-        if (i >= window - 1) {
-            float sum = 0.0f;
-            for (int k = 0; k < window; ++k)
-                sum += input[ IDX(series_idx, i - k, len) ];
-            output[ IDX(series_idx, i, len) ] = sum / window;
-        } else {
-            output[ IDX(series_idx, i, len) ] = NAN;
+    if (j == 0) {
+        float ema = serie[0];
+        res[0 * result_cols + 0] = serie[0];
+        res[0 * result_cols + 1] = serie[0];
+        res[0 * result_cols + 2] = ema;
+        res[0 * result_cols + 3] = 50.0f;
+        res[0 * result_cols + 4] = 50.0f;
+    } else if (j < period) {
+        float sum_sma = 0.0f, ema = serie[0], gain = 0.0f, loss = 0.0f;
+        for (int i = 0; i <= j; i++) {
+            sum_sma += serie[i];
+            if (i > 0) {
+                float diff = serie[i] - serie[i - 1];
+                if (diff > 0) gain += diff;
+                else loss -= diff;
+            }
         }
+        float close = serie[j];
+        float rs = (loss == 0.0f) ? 0.0f : gain / loss;
+
+        float local_low = close, local_high = close;
+        for (int i = 0; i <= j; i++) {
+            if (serie[i] < local_low) local_low = serie[i];
+            if (serie[i] > local_high) local_high = serie[i];
+        }
+
+        res[j * result_cols + 0] = close;
+        res[j * result_cols + 1] = sum_sma / (j + 1);
+        for (int i = 1; i <= j; i++) ema = serie[i] * k + ema * k_antes;
+        res[j * result_cols + 2] = ema;
+        res[j * result_cols + 3] = (loss == 0.0f) ? 100.0f : (100.0f - (100.0f / (1.0f + rs)));
+        res[j * result_cols + 4] = (local_high == local_low) ? 50.0f : (100.0f * (close - local_low) / (local_high - local_low));
+
+    } else {
+        float sum_sma = 0.0f;
+        for (int i = j - period + 1; i <= j; i++) sum_sma += serie[i];
+        float ema = serie[j - 1];
+        for (int i = j - period + 1; i <= j; i++) ema = serie[i] * k + ema * k_antes;
+        float diff = serie[j] - serie[j - 1];
+        float gain = (diff > 0) ? diff : 0.0f;
+        float loss = (diff < 0) ? -diff : 0.0f;
+
+        float sum_gain = 0.0f, sum_loss = 0.0f;
+        for (int i = j - period + 1; i <= j; i++) {
+            float d = serie[i] - serie[i - 1];
+            if (d > 0) sum_gain += d;
+            else sum_loss -= d;
+        }
+
+        float rs = (sum_loss == 0.0f) ? 0.0f : sum_gain / sum_loss;
+
+        float high = serie[j - period + 1], low = serie[j - period + 1];
+        for (int i = j - period + 1; i <= j; i++) {
+            if (serie[i] > high) high = serie[i];
+            if (serie[i] < low) low = serie[i];
+        }
+
+        res[j * result_cols + 0] = serie[j];
+        res[j * result_cols + 1] = sum_sma / period;
+        res[j * result_cols + 2] = ema;
+        res[j * result_cols + 3] = (sum_loss == 0.0f) ? 100.0f : (100.0f - (100.0f / (1.0f + rs)));
+        res[j * result_cols + 4] = (high == low) ? 50.0f : (100.0f * (serie[j] - low) / (high - low));
     }
 }
 
-// --- Kernel EMA com stride ---
-__global__ void ema_kernel_stride(const float *input, float *output,
-                                  int len, int window, int total_series)
-{
-    int series_idx = blockIdx.x;
-    int tid        = threadIdx.x;
-    int stride     = blockDim.x;
-    float alpha    = 2.0f / (window + 1);
-
-    if (series_idx >= total_series) return;
-
-    // Para EMA cada i depende de i-1, então vamos fazer:
-    // 1) thread 0 inicializa output[0]
-    // 2) __syncthreads() para todos lerem
-    // 3) todas percorrem stride (iniciando em tid, mas garantir ordem)
-    if (tid == 0) {
-        output[ IDX(series_idx, 0, len) ] = input[ IDX(series_idx, 0, len) ];
-    }
-    __syncthreads();
-
-    // Em seguida cada thread faz sua parte, mas deve respeitar dependência
-    // A forma simples: cada thread serialmente percorre i += stride,
-    // lendo output[i-1] que já está calculado por thread ou por tid==0
-    for (int i = tid; i < len; i += stride) {
-        if (i == 0) continue;
-        float prev = output[ IDX(series_idx, i - 1, len) ];
-        float curr = input[  IDX(series_idx, i, len)     ];
-        output[ IDX(series_idx, i, len) ] = alpha * curr + (1 - alpha) * prev;
-    }
-}
-
-// --- Kernel RSI com stride ---
-__global__ void rsi_kernel_stride(const float *input, float *output,
-                                  int len, int window, int total_series)
-{
-    int series_idx = blockIdx.x;
-    int tid        = threadIdx.x;
-    int stride     = blockDim.x;
-
-    if (series_idx >= total_series) return;
-
-    for (int i = tid; i < len; i += stride) {
-        if (i < window) {
-            output[ IDX(series_idx, i, len) ] = NAN;
-            continue;
-        }
-        float gain = 0.0f, loss = 0.0f;
-        for (int k = i - window + 1; k <= i; ++k) {
-            float delta = input[IDX(series_idx, k, len)] - input[IDX(series_idx, k - 1, len)];
-            if (delta > 0) gain += delta;
-            else          loss -= delta;
-        }
-        float rs = (loss == 0.0f) ? 100.0f : gain / loss;
-        output[ IDX(series_idx, i, len) ] = 100.0f - (100.0f / (1.0f + rs));
-    }
-}
-
-// --- Kernel Stochastic %K com stride ---
-__global__ void stochk_kernel_stride(const float *input, float *output,
-                                     int len, int window, int total_series)
-{
-    int series_idx = blockIdx.x;
-    int tid        = threadIdx.x;
-    int stride     = blockDim.x;
-
-    if (series_idx >= total_series) return;
-
-    for (int i = tid; i < len; i += stride) {
-        if (i < window - 1) {
-            output[ IDX(series_idx, i, len) ] = NAN;
-            continue;
-        }
-        float highest = input[ IDX(series_idx, i - window + 1, len) ];
-        float lowest  = highest;
-        for (int k = i - window + 1; k <= i; ++k) {
-            float v = input[ IDX(series_idx, k, len) ];
-            if (v > highest) highest = v;
-            if (v <  lowest ) lowest  = v;
-        }
-        float denom = highest - lowest;
-        if (denom == 0.0f)
-            output[ IDX(series_idx, i, len) ] = 0.0f;
-        else {
-            float close = input[ IDX(series_idx, i, len) ];
-            output[ IDX(series_idx, i, len) ] = (close - lowest) / denom * 100.0f;
-        }
-    }
-}
-
-// --- Wrappers com strike ---
-void run_cuda_sma_batch(float **in, float **out,
-                        int num_series, int len, int window)
-{
-    // flatten
-    float *h_in  = (float*) malloc(num_series*len*sizeof(float));
-    float *h_out = (float*) malloc(num_series*len*sizeof(float));
-    for(int s=0;s<num_series;++s)
-        memcpy(h_in + s*len, in[s], len*sizeof(float));
-
-    float *d_in, *d_out;
-    cudaMalloc(&d_in,  num_series*len*sizeof(float));
-    cudaMalloc(&d_out, num_series*len*sizeof(float));
-    cudaMemcpy(d_in, h_in, num_series*len*sizeof(float), cudaMemcpyHostToDevice);
-
-    dim3 block(256);
-    dim3 grid(num_series);
-    sma_kernel_stride<<<grid,block>>>(d_in,d_out,len,window,num_series);
-    cudaDeviceSynchronize();
-
-    cudaMemcpy(h_out, d_out, num_series*len*sizeof(float), cudaMemcpyDeviceToHost);
-    for(int s=0;s<num_series;++s)
-        memcpy(out[s], h_out + s*len, len*sizeof(float));
-
-    cudaFree(d_in);
-    cudaFree(d_out);
-    free(h_in);
-    free(h_out);
-}
-
-void run_cuda_ema_batch(float **in, float **out,
-                        int num_series, int len, int window)
-{
-    float *h_in  = (float*) malloc(num_series*len*sizeof(float));
-    float *h_out = (float*) malloc(num_series*len*sizeof(float));
-    for(int s=0;s<num_series;++s)
-        memcpy(h_in + s*len, in[s], len*sizeof(float));
-
-    float *d_in, *d_out;
-    cudaMalloc(&d_in,  num_series*len*sizeof(float));
-    cudaMalloc(&d_out, num_series*len*sizeof(float));
-    cudaMemcpy(d_in, h_in, num_series*len*sizeof(float), cudaMemcpyHostToDevice);
-
-    dim3 block(256);
-    dim3 grid(num_series);
-    ema_kernel_stride<<<grid,block>>>(d_in,d_out,len,window,num_series);
-    cudaDeviceSynchronize();
-
-    cudaMemcpy(h_out, d_out, num_series*len*sizeof(float), cudaMemcpyDeviceToHost);
-    for(int s=0;s<num_series;++s)
-        memcpy(out[s], h_out + s*len, len*sizeof(float));
-
-    cudaFree(d_in);
-    cudaFree(d_out);
-    free(h_in);
-    free(h_out);
-}
-
-void run_cuda_rsi_batch(float **in, float **out,
-                        int num_series, int len, int window)
-{
-    float *h_in  = (float*) malloc(num_series*len*sizeof(float));
-    float *h_out = (float*) malloc(num_series*len*sizeof(float));
-    for(int s=0;s<num_series;++s)
-        memcpy(h_in + s*len, in[s], len*sizeof(float));
-
-    float *d_in, *d_out;
-    cudaMalloc(&d_in,  num_series*len*sizeof(float));
-    cudaMalloc(&d_out, num_series*len*sizeof(float));
-    cudaMemcpy(d_in, h_in, num_series*len*sizeof(float), cudaMemcpyHostToDevice);
-
-    dim3 block(256);
-    dim3 grid(num_series);
-    rsi_kernel_stride<<<grid,block>>>(d_in,d_out,len,window,num_series);
-    cudaDeviceSynchronize();
-
-    cudaMemcpy(h_out, d_out, num_series*len*sizeof(float), cudaMemcpyDeviceToHost);
-    for(int s=0;s<num_series;++s)
-        memcpy(out[s], h_out + s*len, len*sizeof(float));
-
-    cudaFree(d_in);
-    cudaFree(d_out);
-    free(h_in);
-    free(h_out);
-}
-
-void run_cuda_stochk_batch(float **in, float **out,
-                           int num_series, int len, int window)
-{
-    float *h_in  = (float*) malloc(num_series*len*sizeof(float));
-    float *h_out = (float*) malloc(num_series*len*sizeof(float));
-    for(int s=0;s<num_series;++s)
-        memcpy(h_in + s*len, in[s], len*sizeof(float));
-
-    float *d_in, *d_out;
-    cudaMalloc(&d_in,  num_series*len*sizeof(float));
-    cudaMalloc(&d_out, num_series*len*sizeof(float));
-    cudaMemcpy(d_in, h_in, num_series*len*sizeof(float), cudaMemcpyHostToDevice);
-
-    dim3 block(256);
-    dim3 grid(num_series);
-    stochk_kernel_stride<<<grid,block>>>(d_in,d_out,len,window,num_series);
-    cudaDeviceSynchronize();
-
-    cudaMemcpy(h_out, d_out, num_series*len*sizeof(float), cudaMemcpyDeviceToHost);
-    for(int s=0;s<num_series;++s)
-        memcpy(out[s], h_out + s*len, len*sizeof(float));
-
-    cudaFree(d_in);
-    cudaFree(d_out);
-    free(h_in);
-    free(h_out);
-}
+// Restante igual (listar_csvs, load_csv, salvar_csv)... Se quiser também, posso colar aqui.
 int load_csv(const char *filename, float *data, int max_size) {
     FILE *fp = fopen(filename, "r");
     if (!fp) return -1;
@@ -289,9 +139,7 @@ void salvar_csv(const char *output_path, float **resultados, int tamanho) {
 }
 
 int main() {
-    const char *dir_empresas = "empresas";
-    const char *dir_saida = "saida";
-    listar_csvs(dir_empresas);
+    listar_csvs("empresas");
 
     float **series = (float **)malloc(num_files * sizeof(float*));
     float ***resultados = (float ***)malloc(num_files * sizeof(float**));
@@ -305,73 +153,72 @@ int main() {
         }
     }
 
+    float *h_series_flat = (float *)malloc(num_files * MAX_SIZE * sizeof(float));
+    float *h_result_flat = (float *)malloc(num_files * MAX_SIZE * RESULT_COLS * sizeof(float));
+    int *h_sizes = (int *)malloc(num_files * sizeof(int));
+
     for (int i = 0; i < num_files; i++) {
         sizes[i] = load_csv(filenames[i], series[i], MAX_SIZE);
-        if (sizes[i] < 0) { printf("Falha ao carregar %s\n", filenames[i]); sizes[i] = 0; }
-    }
-
-    double tempo_total = 0.0;
-    float **sma = (float **)malloc(num_files * sizeof(float*));
-    float **ema = (float **)malloc(num_files * sizeof(float*));
-    float **rsi = (float **)malloc(num_files * sizeof(float*));
-    float **stoch = (float **)malloc(num_files * sizeof(float*));
-
-    for (int i = 0; i < num_files; i++) {
-        sma[i] = (float *)malloc(MAX_SIZE * sizeof(float));
-        ema[i] = (float *)malloc(MAX_SIZE * sizeof(float));
-        rsi[i] = (float *)malloc(MAX_SIZE * sizeof(float));
-        stoch[i] = (float *)malloc(MAX_SIZE * sizeof(float));
-    }
-
-    cudaEvent_t start, stop;
-    cudaEventCreate(&start);
-    cudaEventCreate(&stop);
-    cudaEventRecord(start, 0);
-
-    run_cuda_sma_batch(series, sma, num_files, MAX_SIZE, 14);
-    run_cuda_ema_batch(series, ema, num_files, MAX_SIZE, 14);
-    run_cuda_rsi_batch(series, rsi, num_files, MAX_SIZE, 14);
-    run_cuda_stochk_batch(series, stoch, num_files, MAX_SIZE, 14);
-
-    cudaEventRecord(stop, 0);
-    cudaEventSynchronize(stop);
-    float elapsed_ms = 0.0f;
-    cudaEventElapsedTime(&elapsed_ms, start, stop);
-    tempo_total = elapsed_ms / 1000.0;
-
-    printf("\nTempo total de cálculo (batch CUDA): %.6f segundos\n", tempo_total);
-
-    for (int i = 0; i < num_files; i++) {
-        for (int j = 0; j < sizes[i]; j++) {
-            resultados[i][j][0] = series[i][j];
-            resultados[i][j][1] = sma[i][j];
-            resultados[i][j][2] = ema[i][j];
-            resultados[i][j][3] = rsi[i][j];
-            resultados[i][j][4] = stoch[i][j];
+        h_sizes[i] = sizes[i];
+        for (int j = 0; j < MAX_SIZE; j++) {
+            h_series_flat[i * MAX_SIZE + j] = series[i][j];
         }
     }
 
+    float *d_series, *d_result;
+    int *d_sizes;
+
+    cudaMalloc(&d_series, num_files * MAX_SIZE * sizeof(float));
+    cudaMalloc(&d_result, num_files * MAX_SIZE * RESULT_COLS * sizeof(float));
+    cudaMalloc(&d_sizes, num_files * sizeof(int));
+
+    cudaMemcpy(d_series, h_series_flat, num_files * MAX_SIZE * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_sizes, h_sizes, num_files * sizeof(int), cudaMemcpyHostToDevice);
+
+    dim3 grid(num_files);
+    dim3 block(MAX_SIZE);
+    gettimeofday(&start, NULL);
+    indicadores_kernel_2D<<<grid, block>>>(d_series, d_sizes, d_result, MAX_SIZE, RESULT_COLS, PERIOD);
+    gettimeofday(&end, NULL);
+
+    cudaDeviceSynchronize();
+    double tempo = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6;
+    printf("Tempo cálculo indicadores: %.6f s\n", tempo);
+    cudaMemcpy(h_result_flat, d_result, num_files * MAX_SIZE * RESULT_COLS * sizeof(float), cudaMemcpyDeviceToHost);
+
+
+    for (int i = 0; i < num_files; i++) {
+        for (int j = 0; j < MAX_SIZE; j++) {
+            for (int k = 0; k < RESULT_COLS; k++) {
+                resultados[i][j][k] = h_result_flat[(i * MAX_SIZE + j) * RESULT_COLS + k];
+            }
+        }
+    }
+
+    /*
     for (int i = 0; i < num_files; i++) {
         if (sizes[i] > 0) {
-            const char *input_path = filenames[i];
-            const char *nome_arquivo = strrchr(input_path, '/');
-            if (!nome_arquivo) nome_arquivo = input_path; else nome_arquivo++;
+            const char *nome = strrchr(filenames[i], '/');
+            nome = nome ? nome + 1 : filenames[i];
             char nome_empresa[64];
-            strncpy(nome_empresa, nome_arquivo, strchr(nome_arquivo, '.') - nome_arquivo);
-            nome_empresa[strchr(nome_arquivo, '.') - nome_arquivo] = '\0';
+            strncpy(nome_empresa, nome, strchr(nome, '.') - nome);
+            nome_empresa[strchr(nome, '.') - nome] = '\0';
+
             char output_path[256];
-            snprintf(output_path, sizeof(output_path), "%s/cuda-batch-%s.csv", dir_saida, nome_empresa);
+            snprintf(output_path, sizeof(output_path), "saida/cuda-%s.csv", nome_empresa);
             salvar_csv(output_path, resultados[i], sizes[i]);
         }
     }
-
+    */
     for (int i = 0; i < num_files; i++) {
         free(series[i]);
-        free(sma[i]); free(ema[i]); free(rsi[i]); free(stoch[i]);
         for (int j = 0; j < MAX_SIZE; j++) free(resultados[i][j]);
         free(resultados[i]);
     }
-    free(series); free(resultados); free(sma); free(ema); free(rsi); free(stoch); free(sizes);
-    cudaEventDestroy(start); cudaEventDestroy(stop);
+    free(series); free(resultados); free(sizes);
+    free(h_series_flat); free(h_result_flat); free(h_sizes);
+    cudaFree(d_series); cudaFree(d_result); cudaFree(d_sizes);
+
     return 0;
 }
+

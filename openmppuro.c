@@ -6,7 +6,7 @@
 #include <sys/time.h>
 #include <omp.h>
 #define MAX_SIZE 1300
-#define MAX_FILES 500
+#define MAX_FILES 5000
 #define FILENAME_LEN 128
 #define RESULT_COLS 5  // Close, SMA, EMA, RSI, StochK
 
@@ -256,7 +256,7 @@ int main() {
     gettimeofday(&end, NULL);
     double tempo = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6;
     printf("Tempo cálculo indicadores: %.6f s\n", tempo);
-
+    /*
     // Salvar resultados
     for (int i = 0; i < num_files; i++) {
         if (sizes[i] > 0) {
@@ -278,7 +278,7 @@ int main() {
             //printf("Salvo: %s\n", output_path);
         }
     }
-
+    */
     // Liberar memória
     for (int i = 0; i < num_files; i++) {
         free(series[i]);

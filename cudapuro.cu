@@ -190,12 +190,15 @@ int main() {
 
     int threads = 128;
     int blocks = (num_files + threads - 1) / threads;
+    gettimeofday(&start, NULL);
     indicadores_kernel<<<blocks, threads>>>(d_series, d_sizes, d_result, MAX_SIZE, RESULT_COLS, PERIOD, num_files);
     cudaDeviceSynchronize();
-
+    gettimeofday(&end, NULL);
+    double tempo = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6;
+    printf("Tempo cálculo indicadores: %.6f s\n", tempo);
     cudaMemcpy(h_result_flat, d_result, num_files * MAX_SIZE * RESULT_COLS * sizeof(float), cudaMemcpyDeviceToHost);
     
-    gettimeofday(&start, NULL);
+
     for (int i = 0; i < num_files; i++) {
         for (int j = 0; j < MAX_SIZE; j++) {
             for (int k = 0; k < RESULT_COLS; k++) {
@@ -203,10 +206,8 @@ int main() {
             }
         }
     }
-    gettimeofday(&end, NULL);
-    double tempo = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec)/1e6;
-    printf("Tempo cálculo indicadores: %.6f s\n", tempo);
 
+    /*
 
     for (int i = 0; i < num_files; i++) {
         if (sizes[i] > 0) {
@@ -221,7 +222,7 @@ int main() {
             salvar_csv(output_path, resultados[i], sizes[i]);
         }
     }
-
+    */
     for (int i = 0; i < num_files; i++) {
         free(series[i]);
         for (int j = 0; j < MAX_SIZE; j++) free(resultados[i][j]);

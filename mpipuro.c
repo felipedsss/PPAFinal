@@ -7,7 +7,7 @@
 #include <mpi.h>
 
 #define MAX_SIZE 1300
-#define MAX_FILES 500
+#define MAX_FILES 5000
 #define FILENAME_LEN 128
 #define RESULT_COLS 5
 
@@ -63,78 +63,6 @@ int load_csv(const char *filename, float *data, int max_size) {
     return count;
 }
 
-void calcular_indicadores(float *serie, int size, float **resultado, int period) {
-    float k = 2.0f / (period + 1);
-    float k_antes = 1.0f - k;
-    float ema = serie[0];
-    float sum_sma = serie[0], sum_gain = 0.0f, sum_loss = 0.0f;
-    float low = serie[0], high = serie[0];
-    resultado[0][0] = serie[0];
-    resultado[0][1] = serie[0];
-    resultado[0][2] = ema;
-    resultado[0][3] = 50.0f;
-    resultado[0][4] = 50.0f;
-
-    for (int j = 1; j < period && j < size; j++) {
-        float close = serie[j];
-        resultado[j][0] = close;
-        sum_sma += close;
-        resultado[j][1] = sum_sma / (j + 1);
-        ema = close * k + ema * k_antes;
-        resultado[j][2] = ema;
-
-        float gain = 0.0f, loss = 0.0f;
-        for (int p = 1; p <= j; p++) {
-            float diff = serie[p] - serie[p - 1];
-            if (diff > 0) gain += diff;
-            else loss -= diff;
-        }
-        float rs = (loss == 0.0f) ? 0.0f : gain / loss;
-        resultado[j][3] = (loss == 0.0f) ? 100.0f : (100.0f - (100.0f / (1.0f + rs)));
-
-        float local_low = close, local_high = close;
-        for (int k = 0; k <= j; k++) {
-            float val = serie[k];
-            if (val < local_low) local_low = val;
-            if (val > local_high) local_high = val;
-        }
-        resultado[j][4] = (local_high == local_low) ? 50.0f : (100.0f * (close - local_low) / (local_high - local_low));
-    }
-
-    sum_gain /= period;
-    sum_loss /= period;
-
-    for (int j = period; j < size; j++) {
-        float close = serie[j];
-        resultado[j][0] = close;
-        sum_sma += close - serie[j - period];
-        resultado[j][1] = sum_sma / period;
-        ema = close * k + ema * k_antes;
-        resultado[j][2] = ema;
-
-        float diff = close - serie[j - 1];
-        float gain = (diff > 0) ? diff : 0.0f;
-        float loss = (diff < 0) ? -diff : 0.0f;
-        sum_gain = (sum_gain * (period - 1) + gain) / period;
-        sum_loss = (sum_loss * (period - 1) + loss) / period;
-        float rs = (sum_loss == 0.0f) ? 0.0f : (sum_gain / sum_loss);
-        resultado[j][3] = (sum_loss == 0.0f) ? 100.0f : (100.0f - (100.0f / (1.0f + rs)));
-
-        float val_out = serie[j - period];
-        if (close >= high) high = close;
-        else if (val_out == high) {
-            high = serie[j - period + 1];
-            for (int m = j - period + 2; m <= j; m++) if (serie[m] > high) high = serie[m];
-        }
-        if (close <= low) low = close;
-        else if (val_out == low) {
-            low = serie[j - period + 1];
-            for (int m = j - period + 2; m <= j; m++) if (serie[m] < low) low = serie[m];
-        }
-        resultado[j][4] = (high == low) ? NAN : (100.0f * (close - low) / (high - low));
-    }
-}
-
 void salvar_csv(const char *output_path, float **resultados, int tamanho) {
     FILE *out = fopen(output_path, "w");
     if (!out) {
@@ -155,6 +83,8 @@ void salvar_csv(const char *output_path, float **resultados, int tamanho) {
 
     fclose(out);
 }
+
+
 int main(int argc, char **argv) {
     MPI_Init(&argc, &argv);
     int rank, nprocs;
@@ -285,7 +215,7 @@ int main(int argc, char **argv) {
 
         for (int j = 0; j < size; j++) {
             for (int k = 0; k < RESULT_COLS; k++) {
-                buffer_local[i * MAX_SIZE * RESULT_COLS + j * RESULT_COLS + k] = resultado[j][k];
+                buffer_local[i * size * RESULT_COLS + j * RESULT_COLS + k] = resultado[j][k];
             }
         }
     }
@@ -338,7 +268,8 @@ int main(int argc, char **argv) {
                     resultado[j][k] = buffer_global[index++];
                 }
             }
-            gettimeofday(&end, NULL);
+            
+            /*
             const char *nome = strrchr(filenames[i], '/');
             if (!nome) nome = filenames[i]; else nome++;
             char nome_empresa[64];
@@ -353,6 +284,7 @@ int main(int argc, char **argv) {
             salvar_csv(output_path, resultado, sizes_global[i]);
 
             for (int j = 0; j < sizes_global[i]; j++) free(resultado[j]);
+            */
             free(resultado);
         }
         free(buffer_global);
